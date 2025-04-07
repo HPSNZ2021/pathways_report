@@ -68,18 +68,13 @@ knitr::opts_chunk$set(echo = FALSE,
 library(tidyverse)
 library(tidytext)
 library(janitor)
-# library(splitstackshape)
 library(ISOweek)
 
 # WORKSPACE ENHACEMENT
 library(odbc)
 library(DBI)
-# library(config) do not load due to masking issues
 library(pool)
-# library(dbplyr) # is this needed?
 library(here)
-# library(htmltools)
-# library(devtools)
 
 # SMARTABASE API V1 --------------------------------------------------------------
 
@@ -98,7 +93,6 @@ library(gridExtra)
 library(ggpmisc)
 library(grid)
 
-
 # FUZZY logic
 
 library(fuzzyjoin)
@@ -107,15 +101,10 @@ library(stringdist)
 
 library(rmarkdown)
 library(flextable)
-# library(kableExtra)
-# library(gt)
 library(scales)
-# library(latex2exp)
 library(gluedown)
 library(tinytex)
-# library(latexpdf)
 library(knitr)
-# library(htmlvault)
 
 # MS Office
 library(officedown)
@@ -126,7 +115,6 @@ library(git2r)
 
 # COMMS
 library(Microsoft365R)
-# library(blastula)
 library(glue)
 
 
