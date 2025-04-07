@@ -1,0 +1,1956 @@
+---
+title: "HPSNZ APS Case Load Report"
+subtitle: "Extended Health & Wellness Team"
+author: "HPSNZ Strategy and Intelligence"
+date: "`r format(Sys.Date(), '%Y/%m/%d')`"
+output: 
+  officedown::rdocx_document:
+    toc: TRUE
+    toc_depth: 5
+    # fig_caption: yes
+    # fig_height: 5
+    # fig_width: 5
+    reference_docx: report_word_template.docx
+params:
+  report_dev:
+    label: Report Development Stage
+    value: 85
+    input: slider
+    min: 0
+    max: 100
+    step: 5
+    post: '%'
+    sep: ''
+  selection_parameters:
+    label: REPORT OPTIONS
+    value: 'Please select from the following selection criteria:'
+  report_date_min:
+    label: REPORT START DATE
+    format: "yyyy-mm-dd"
+    input: date
+    startview: month
+    value: "2024-01-01"
+  report_date_max:
+    label: REPORT END DATE
+    format: "yyyy-mm-dd"
+    input: date
+    startview: month
+    value: !r Sys.Date()
+  select_aps:
+    label: Select APS disciplines for report
+    value: !r NA
+    input: select
+    choices: [Medical, Nurse, Physiotherapy, Psychology, Nutrition, Life]
+    multiple: yes
+  pathways_only_data:
+    label: Include Pathways data?
+    value: FALSE
+  unsupported_data:
+    label: Include Appendix with detail on unsupported individuals?
+    value: FALSE
+
+
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = FALSE,
+                      message=FALSE, 
+                      warning=FALSE,
+                      dpi=500,
+                      fig.align = 'center'
+                      # include=FALSE
+                      )
+
+# CORE TOOLS --------------------------------------------------------------
+
+library(tidyverse)
+library(tidytext)
+library(janitor)
+# library(splitstackshape)
+library(ISOweek)
+
+# WORKSPACE ENHACEMENT
+library(odbc)
+library(DBI)
+# library(config) do not load due to masking issues
+library(pool)
+# library(dbplyr) # is this needed?
+library(here)
+# library(htmltools)
+# library(devtools)
+
+# SMARTABASE API V1 --------------------------------------------------------------
+
+library(neon)
+
+# VISUALS -----------------------------------------------------------------
+
+library(ggplot2)
+library(munsell)
+library(ggridges)
+library(ggnewscale)
+library(ggtext)
+library(viridis)
+library(patchwork)
+library(gridExtra)
+library(ggpmisc)
+library(grid)
+
+
+# FUZZY logic
+
+library(fuzzyjoin)
+library(stringdist)
+# RMd ---------------------------------------------------------------------
+
+library(rmarkdown)
+library(flextable)
+# library(kableExtra)
+# library(gt)
+library(scales)
+# library(latex2exp)
+library(gluedown)
+library(tinytex)
+# library(latexpdf)
+library(knitr)
+# library(htmlvault)
+
+# MS Office
+library(officedown)
+library(officer)
+
+# OTHER
+library(git2r)
+
+# COMMS
+library(Microsoft365R)
+# library(blastula)
+library(glue)
+
+
+```
+
+```{r snowflake_pool, message=FALSE, warning=FALSE, include=FALSE}
+pool_args <- config::get("hpsnz_snowflake")
+
+pool <- pool::dbPool(
+  drv = odbc::odbc(),
+  Driver = pool_args$driver,
+  Dsn = pool_args$dsn,
+  Server = pool_args$server,
+  Database = pool_args$database,
+  UID = pool_args$UID,
+  authenticator = pool_args$authenticator,
+  schema = pool_args$schema
+)
+
+
+
+tables <- dbGetQuery(pool, "SHOW TABLES")
+
+sb_curated_snowflake <- dbGetQuery(pool, "SHOW TABLES") %>% 
+  select(name, database_name, schema_name) %>% 
+  filter(database_name == "CURATED" & schema_name == "SMARTABASE") 
+
+sb_raw_snowflake <- dbGetQuery(pool, "SHOW TABLES") %>% 
+  select(name, database_name, schema_name) %>% 
+  filter(database_name == "RAW" & schema_name == "SMARTABASE") 
+
+```
+
+```{r functions_etc, message=FALSE, warning=FALSE, include=FALSE}
+# function to format select_aps vector from params
+
+select_aps <-  params$select_aps
+
+format_select_aps <- function(x) {
+  x <- x %>% purrr::discard(is.na)
+  if (length(x) == 1) {
+    return(x)
+  } else if (length(x) == 2) {
+    return(paste(x, collapse = " and "))
+  } else {
+    return(paste(c(paste(x[-length(x)], collapse = ", "), x[length(x)]), collapse = ", and "))
+  }
+}
+
+# SCALE_FILL Fn ----
+
+scale_fill_sex <- function(...){
+  ggplot2:::manual_scale(
+    'fill', 
+    values = setNames(c("hotpink", "cornflowerblue"), 
+                      c("Female", "Male")), 
+    ...
+  )
+}
+
+scale_fill_aps <- function(...){
+  ggplot2:::manual_scale(
+    'fill', 
+    values = setNames(c(viridis_pal(alpha = 1, begin = 0, end = 1, direction = 1, option = "H")(6)), 
+                      c("Medical",
+                        "Nurse",
+                        "Physiotherapy",
+                        "Psychology",
+                        "Nutrition",
+                        "Life")), 
+    ...
+  )
+}
+
+scale_fill_health_team <- function(...){
+  ggplot2:::manual_scale(
+    'fill', 
+    values = setNames(c("#F25A40CC", "#FF8D34CC", "#C7C8CA", "#000000"), 
+                      c("Medical", "Nurse", "Physiotherapy", "Massage")), 
+    ...
+  )
+}
+
+scale_fill_health_team_expanded <- function(...){
+  ggplot2:::manual_scale(
+    'fill', 
+    values = setNames(c("#F25A40", "#FF8D34", "#C7C8CA","#000000", 
+                        "#F25A40CC", "#FF8D34CC", "#C7C8CACC", "#000000CC",
+                        "#F25A4080", "#FF8D3499", "#C7C8CA99", "#00000099" ) ,
+                      c("Medical - CORE", "Nurse - CORE", "Physiotherapy - CORE", "Massage - CORE", 
+                        "Medical - NSO", "Nurse - NSO", "Physiotherapy - NSO", "Massage - NSO",  
+                        "Medical - HPSNZ", "Nurse - HPSNZ", "Physiotherapy - HPSNZ", "Massage - HPSNZ")),
+    ...
+  )
+}
+
+hpsnz_flex_border <- fp_border(color = "#333F38", width = 0.5)
+
+
+# HPSNZ COLOURS re-ordered for carding visuals ----
+
+hpsnz_cols_carding <- c("#F25A40", "#D0D0D0", "#333F48", "#FF8d34")
+
+hpsnz_cols_5 <- c("#F25A40", "#FF8D34", "#C7C8CA", "#000000", "#FFFFFF")
+
+hpsnz_cols_sex <- c("#ff75a2", "#333ebd")
+
+
+
+# report span ----
+# report_span <- case_when(as.duration(interval(ymd(params$report_date_min), 
+#                                               ymd(params$report_date_max))) < weeks(5)  ~ "1 days",
+#                          as.duration(interval(ymd(params$report_date_min), 
+#                                               ymd(params$report_date_max))) < weeks(12) ~ "1 weeks",
+#                          .default                                                      = "1 months")
+
+# Flextable parameters ----
+flex_colourer_red <- col_numeric(
+  palette = c("transparent", mnsl("5R 5/8"), mnsl("5R 5/10"), mnsl("5R 5/12")),
+  domain = c(0, 33, 66, 100))
+
+flex_colourer_red_two <- col_numeric(
+  palette = c("transparent", mnsl("5R 5/12")),
+  domain = c(0,  100))
+
+flex_colourer_green <- col_numeric(
+  palette = c("#FFFFFF00",mnsl("10GY 7/6"), mnsl("10GY 7/10"), mnsl("10GY 7/14")),
+  domain = c(0, 25, 50, 100))
+
+hpsnz_flex_border <- flextable::fp_border(color = "#333F38", width = 0.5)
+
+fpp <- officer::fp_par(text.align = "left", padding = 3)
+
+# PSYCHOLOGY FUNCTION TO SEPARATE TOPICS INTO UNIQUE COLUMNS -------------------------
+
+process_impact <-  function (df) {  
+  # Finding unique values across the entire "impact" column
+  unique_values <- unique(unlist(strsplit(unlist(df$impact), "\\s*,\\s*|\\s*/\\s*|\\s*\\|\\s*")))
+  
+  # Creating an empty data frame with columns for each unique value
+  impact_df <- data.frame(matrix(ncol = length(unique_values), nrow = 0))
+  colnames(impact_df) <- unique_values
+  
+  # Iterating through the "impact" column
+  for (impact in df$impact) {
+    # Splitting the impact variable using comma as a separator
+    impact_values <- strsplit(impact, "\\s*,\\s*|\\s*/\\s*|\\s*\\|\\s*")[[1]]
+    
+    # Creating a temporary data frame to store the count of occurrences
+    temp_df <- data.frame(matrix(ncol = length(unique_values), nrow = 1))
+    colnames(temp_df) <- unique_values
+    
+    # Filling the columns with the count of occurrences for each unique value
+    for (value in unique_values) {
+      temp_df[[value]] <- max(impact_values == value)
+    }
+    
+    # Appending the temporary data frame to the final result
+    impact_df <- rbind(impact_df, temp_df)
+  }
+  
+  cbind(df, impact_df)
+  
+}
+
+```
+
+```{r snowflake_query, message=FALSE, warning=FALSE, include=FALSE}
+
+
+# query build -------------------------------------------------------------
+
+# query <- glue("
+#               SELECT first_name, last_name, id
+#               FROM curated.smartabase.USER
+#               ")
+# ams_users <-  dbGetQuery (pool, query) %>%
+#   clean_names() %>%
+#   mutate(about = paste(first_name, last_name, sep = " ")) %>%
+#   select(about, id)
+
+ams_users <- get_id(filter_user_key = "group",
+                    filter_user_value = "MyAccount") %>%
+   clean_names() %>%
+   select(about, user_id)
+
+
+query <- glue("
+              SELECT user_name_fixed, start_time, clinician_actual, entered_by_id
+              FROM curated.smartabase.MEDICAL_CONSULTATION
+              WHERE START_TIME BETWEEN '{params$report_date_min}' AND '{params$report_date_max}'
+              ")
+ams_medical <-  dbGetQuery (pool, query) %>% 
+  clean_names() %>% 
+  # select(user_name_fixed, start_time) %>% 
+  mutate(aps_discipline = "Medical") 
+
+query <- glue("
+              SELECT user_name_fixed, start_time, entered_by_id 
+              FROM curated.smartabase.NURSE_CONSULTATION
+              WHERE START_TIME BETWEEN '{params$report_date_min}' AND '{params$report_date_max}'
+              ")
+ams_nursing <-  dbGetQuery (pool, query) %>% 
+  clean_names() %>% 
+  # select(user_name_fixed, start_time) %>% 
+  mutate(aps_discipline = "Nurse",
+         clinician_actual = NA_character_)
+
+query <- glue("
+              SELECT user_name_fixed, start_time, clinician_actual, entered_by_id
+              FROM curated.smartabase.PHYSIOTHERAPY_TREATMENT_NOTES
+              WHERE START_TIME BETWEEN '{params$report_date_min}' AND '{params$report_date_max}'
+              ")
+ams_physiotherapy <-  dbGetQuery (pool, query) %>% 
+  clean_names() %>% 
+  # select(user_name_fixed, start_time) %>% 
+  mutate(aps_discipline = "Physiotherapy")
+
+query <- glue("
+              SELECT user_name_fixed, start_time, entered_by_id 
+              FROM curated.smartabase.NUTRITION_NOTES
+              WHERE START_TIME BETWEEN '{params$report_date_min}' AND '{params$report_date_max}'
+              ")
+ams_nutrition <-  dbGetQuery (pool, query) %>% 
+  clean_names() %>% 
+  # select(user_name_fixed, start_time) %>% 
+  mutate(aps_discipline = "Nutrition",
+         clinician_actual = NA_character_)
+
+
+
+query <- glue("
+              SELECT user_name_fixed, start_time, entered_by_id 
+              FROM curated.smartabase.MASTER_PERFORMANCE_PSYCHOLOGY_NOTES
+              WHERE START_TIME BETWEEN '{params$report_date_min}' AND '{params$report_date_max}'
+              ")
+
+ams_psychology <-  dbGetQuery (pool, query) %>%
+  clean_names() %>%
+  # select(user_name_fixed, start_time) %>%
+  mutate(aps_discipline = "Psychology",
+         clinician_actual = NA_character_)
+
+
+
+#### Sb NZOC psych notes pull ----
+
+nzoc_psychology_1_raw <-  pull_smartabase(
+      form                = "NZOC PSYCHOLOGY NOTES by ROD CORBAN",
+      start_date          = format(as.Date(params$report_date_min), format = "%d/%m/%Y"),
+      end_date            = format(as.Date(params$report_date_max), format = "%d/%m/%Y"),
+      filter_user_key     = "group",
+      filter_user_value   = "MyAccount") %>%
+  clean_names() %>% 
+  mutate(clinician_actual = created_by)
+ 
+
+nzoc_psychology_2_raw <-  pull_smartabase(
+      form                = "NZOC PSYCHOLOGY NOTES by DOM VETTISE",
+      start_date          = format(as.Date(params$report_date_min), format = "%d/%m/%Y"),
+      end_date            = format(as.Date(params$report_date_max), format = "%d/%m/%Y"),
+      filter_user_key     = "group",
+      filter_user_value   = "MyAccount") %>%
+  clean_names() %>% 
+  mutate(clinician_actual = created_by)
+
+
+nzoc_psychology_3_raw <-  pull_smartabase(
+      form                = "NZOC PSYCHOLOGY NOTES by KYLIE WILSON",
+      start_date          = format(as.Date(params$report_date_min), format = "%d/%m/%Y"),
+      end_date            = format(as.Date(params$report_date_max), format = "%d/%m/%Y"),
+      filter_user_key     = "group",
+      filter_user_value   = "MyAccount") %>%
+  clean_names() %>% 
+  mutate(clinician_actual = created_by)
+
+
+# List of dataframes
+psychology_df_list <- list(
+  nzoc_psychology_1_raw,
+  nzoc_psychology_2_raw,
+  nzoc_psychology_3_raw
+)
+
+# identify group entries manually from csv downloads
+group_id_wrangling <- read_csv("nzoc psychology notes by dom vettise excel.csv") %>%
+  select(Date, About, `group-uuid`) %>%
+  mutate(clinician_actual = "Dominic Vettise") %>% 
+  rbind(read_csv("nzoc psychology notes by kylie wilson excel.csv") %>%
+  select(Date, About, `group-uuid`) %>%
+  mutate(clinician_actual = "Kylie Wilson")) %>% 
+  rbind(read_csv("nzoc psychology notes by rod corban excel.csv") %>%
+  select(Date, About, `group-uuid`) %>%
+  mutate(clinician_actual = "Rod Corban")) %>% 
+  clean_names() %>%
+  rename(start_date = date) %>% 
+  select(about, start_date, group_uuid, clinician_actual)
+
+# Apply clean_names if the dataframe is not NULL using map()
+cleaned_nzoc_psychology_df <- map(psychology_df_list, ~(if (!is.null(.x)) clean_names(.x) else NULL)) %>% 
+  bind_rows() %>% 
+  left_join(group_id_wrangling, by = c("about", "start_date", "created_by" = "clinician_actual")) %>%
+
+  mutate(aps_discipline = "Psychology",
+         start_date = dmy(start_date)) %>%   
+  select(about, start_date, entered_by_user_id, group_uuid, aps_discipline, clinician_actual) %>% 
+  
+  rename(entered_by_id = entered_by_user_id) %>% 
+  group_by(group_uuid) %>% 
+  filter(row_number()==1) %>% 
+  ungroup() %>% 
+  select(-group_uuid)
+
+#### RETURN TO SNOWFLAKE DATA ----
+
+query <- glue("
+              SELECT user_name_fixed, start_time, entered_by_id
+              FROM curated.smartabase.PERFORMANCE_LIFE_COMMUNICATIONS
+              WHERE START_TIME BETWEEN '{params$report_date_min}' AND '{params$report_date_max}'
+              ")
+ams_life <-  dbGetQuery (pool, query) %>% 
+  clean_names()%>% 
+  # select(user_name_fixed, start_time) %>% 
+  mutate(aps_discipline = "Life",
+         clinician_actual = NA_character_)
+
+query <- glue("
+              SELECT user_name_fixed, start_time, sport, training_region, carding_status, games, campaign_nso, accreditation
+              FROM curated.smartabase.HPSNZ_TAPS
+              ")
+ams_taps_raw <-  dbGetQuery (pool, query) %>% 
+  clean_names() %>% 
+  # select(user_name_fixed, start_time, sport, training_region, carding_status) %>% 
+  mutate(start_date = round_date(start_time, "day"),
+         start_date = ymd(as.character(start_date))) %>% 
+  select(-start_time) %>%
+  rename(about = user_name_fixed) 
+
+
+```
+
+
+```{r helper_stuff, message=FALSE, warning=FALSE, include=FALSE}
+
+test_group <- c("Annie Anise",
+                "Aimee Appelstroop",
+                "Andrew Apple",
+                "Alex Apricot",
+                "Aiden Avocado",
+                "Barry Banana",
+                "Brenda Breadfruit",
+                "Cassandra Carrot",
+                "Claire Cherry",
+                "Chocolate Chips",
+                "Charlie Corriander",
+                "Cathlene Cucumber",
+                "Debbie Date",
+                "Premier Dernier",
+                "Emily Elderberry",
+                "Gordon Grapefruit",
+                "Gus Guava",
+                "Joshua Jackfruit",
+                "Jamie Jackfruit",
+                "Jack Jackfruit",
+                "Juanita Jackfruit",
+                "Jan Juniper",
+                "Manukura Kiwi",
+                "Kathleen Kumquat",
+                "Lisa Lemon",
+                "Lester Lemon",
+                "Lachlan Lime",
+                "Lukka Lychee",
+                "Ross Machejefski",
+                "Braydon Mallitt",
+                "Monica Mandarin",
+                "Michael Mango",
+                "Mary Mango",
+                "Naomi Nectarine",
+                "Oliver Olive",
+                "Orville Orange",
+                "Patty Pappaya",
+                "Pearson Peach",
+                "Peter Pear",
+                "Piet Pineapple",
+                "Test Player",
+                "Rosie Raspberry",
+                "Rylie Rhubarb",
+                "Marni Simpson",
+                "Stephanie Strawberry",
+                "Sarah Strawberry",
+                "Tamara Tamarind",
+                "Braydon Test",
+                "test test test",
+                "Thomassina Tomato",
+                "Violet Vanilla",
+                "William Watermelon",
+                "Zelda Zucchini"
+                )
+
+akl_staff <- tibble(staff_region     = "Auckland",
+                    start_date = ymd("2022.01.01"),
+                    end_date   = NA_Date_,
+                    about      = c("Jane Knobloch",
+                                   "Isobel Freeman",
+                                   "Jennifer Scott",
+                                   "Jordan Salesa",
+                                   "Louise Johnson",
+                                   "Mark Overington",
+                                   "Rebecca Longhurst",
+                                   "Craig Panther",
+                                   "Dan Exeter",
+                                   "Helen Fulcher",
+                                   "Jane Probert",
+                                   "Lynne Coleman",
+                                   "Sam Wootton",
+                                   "Stephen Kara",
+                                   "Theo Dorfling",
+                                   "Christel Dunshea-Mooij",
+                                   "Glenn Kearney",
+                                   "Jeff Rothschild",
+                                   "Jeni Pearce",
+                                   "Kelsey Paterson",
+                                   "Craig Barretto",
+                                   "Campbell Thompson",
+                                   "Jhan Gavala",
+                                   "John Sullivan",
+                                   "Lucy Divers",
+                                   "Sarah de Wattignar",
+                                   "Carolyn Donaldson",
+                                   "Christine Arthur",
+                                   "Cushla Phillips",
+                                   "Hannah McLean",
+                                   "Nicola Lewis-Clifford",
+                                   "Vicki Hudson",
+                                   "Whare Kite",
+                                   "Rachael Ward")) %>% 
+  select(about, staff_region, start_date, end_date)
+
+cambridge_staff <- tibble(staff_region     = "Cambridge",
+                          start_date = ymd("2022.01.01"),
+                          end_date   = NA_Date_,
+                          about      = c("Brendan O'Neill",
+                                         "Judith May",
+                                         "Frances Stringfellow",
+                                         "Deb Robinson",
+                                         "Justin Ralph",
+                                         "Rone Thompson",
+                                         "Megan Munro",
+                                         "Andrew Annear",
+                                         "Lauren Shelley",
+                                         "Riley Smith",
+                                         "Katie Schofield",
+                                         "Louise Davey",
+                                         "Rachael Lockhart",
+                                         "Christina Jacklin",
+                                         "Tim Dovbysh",
+                                         "Jacinta Horan",
+                                         "Helena Graham",
+                                         "Jessie Speedy",
+                                         "Carla Johl",
+                                         "Lucy Trollope",
+                                         "Abi Chapman")) %>% 
+  select(about, staff_region, start_date, end_date)
+
+karapiro_staff <- tibble(staff_region     = "Karapiro",
+                         start_date = ymd("2022.01.01"),
+                         end_date   = NA_Date_,
+                         about      = c("Judikje Scheffer",
+                                        "Stuart Armstrong",
+                                        "Chris Milne",
+                                        "Kirstine Sutton",
+                                        "Katie Snyman",
+                                        "Melissa Gilbertson",
+                                        "Katherine Rottier",
+                                        "Cameron Boland",
+                                        "Kara Thomas",
+                                        "Stent Card",
+                                        "Carey Pohl",
+                                        "Craig Newlands",
+                                        "Isobel Freeman",
+                                        "Julia Bone",
+                                        "Jane Knobloch",
+                                        "Tina Manker",
+                                        "Yolande Schyff")) %>% 
+  select(about, staff_region, start_date, end_date)
+
+chch_staff <- tibble(staff_region     = "Christchurch",
+                     start_date = ymd("2022.01.01"),
+                     end_date   = NA_Date_,
+                     about      = c("Lesley Nicol",
+                                    "Eloise Matthews",
+                                    "Tamsin Chittock",
+                                    "Amos Johnson",
+                                    "Kelsi Parker",
+                                    "Rebecca Cooke",
+                                    "Sara Richardson",
+                                    "Jason Yuill-Proctor",
+                                    "Anna Simcic",
+                                    "Ben Ardagh",
+                                    "Jess Moulds",
+                                    "Ellie Bell")) %>% 
+  select(about, staff_region, start_date, end_date)
+
+dunedin_staff <- tibble(staff_region     = "Dunedin",
+                        start_date = ymd("2022.01.01"),
+                        end_date   = NA_Date_,
+                        about      =c("Peter Gallagher",
+                                      "Helen Littleworth")) %>% 
+  select(about, staff_region, start_date, end_date)
+
+wanaka_staff <- tibble(staff_region     = "Wanaka",
+                       start_date = ymd("2022.01.01"),
+                       end_date   = NA_Date_,
+                       about      = c("Sarah Beable",
+                                      "Nat Anglem",
+                                      "Sarah Gillespie",
+                                      "Ginny Rutledge",
+                                      "Carolyn Cruden",
+                                      "Mariane Wray",
+                                      "Helene Barron",
+                                      "Carol Goodlass")) %>% 
+  select(about, staff_region, start_date, end_date)
+
+welly_staff <- tibble(staff_region     = "Wellington",
+                      start_date = ymd("2022.01.01"),
+                      end_date   = NA_Date_,
+                      about      = c("Tania Don",
+                                     "Waimarama Taumaunu",
+                                     "Helen Regan",
+                                     "Rebecca Jones")) %>% 
+  select(about, staff_region, start_date, end_date)
+
+
+# Natalie Fraser
+# Daniella Cameron
+
+staff_location <- akl_staff %>% 
+  rbind(cambridge_staff, karapiro_staff, chch_staff, wanaka_staff, dunedin_staff, welly_staff)
+
+staff_location <- staff_location %>% 
+  mutate(start_date = case_when(about == "Isobel Freeman" & staff_region == "Auckland" ~ ymd("2025.01.01"),
+                                about == "Jane Knobloch" & staff_region == "Auckland" ~ ymd("2024.09.01"),
+                                .default = start_date),
+         end_date = case_when(about == "Isobel Freeman" & staff_region == "Karapiro" ~ ymd("2024.12.31"),
+                              about == "Jane Knobloch" & staff_region == "Karapiro" ~ ymd("2024.08.31"),
+                                .default = end_date))
+
+
+not_supported <- c("NA",
+                   "--",
+                   "  ",
+                   "",
+                   "UNVERIFIED",
+                   "DECARDED",
+                   "NOT SUPPORTED")
+
+```
+
+```{r wrangle_data, message=FALSE, warning=FALSE, include=FALSE}
+
+ams_taps <- ams_taps_raw %>% 
+  mutate(games = case_when(is.na(games) | games == "" ~ NA_character_,
+                           grepl( "^ *$", games)      ~ NA_character_,
+                           .default = games ),
+         training_region = case_when(is.na(training_region)           ~ NA_character_,
+                                     grepl( "^ *$", training_region)  ~ NA_character_,
+                                     training_region == "NA"          ~ NA_character_,
+                                     .default = training_region),
+         sport = case_when(is.na(sport) & is.na(campaign_nso)  ~ NA_character_,
+                           is.na(sport) & 
+                             !is.na(campaign_nso) & 
+                             grepl("athlete", accreditation, ignore.case = TRUE ) ~ campaign_nso,
+                           grepl( "^ *$", sport)               ~ NA_character_,
+                           sport == "NA"                       ~ NA_character_,
+                           .default = sport),
+         games = case_when(is.na(games)            ~ NA_character_,
+                           grepl( "^ *$", games)   ~ NA_character_,
+                           games == "NA"           ~ NA_character_,
+                           .default = games)
+         ) %>%  
+  mutate(carding_status = case_when(carding_status %in% c("ELITE",
+                                                          "ELITE PERFORMANCE - CONVERT",
+                                                          "ELITE PERFORMANCE - PROBABLE",
+                                                          "POTENTIAL",
+                                                          "PERFORMANCE POTENTIAL",
+                                                          "FOUNDATION PERFORMANCE - OPPORTUNITY",
+                                                          "TALENT CONFIRMATION",
+                                                          "TALENT IDENTIFICATION",
+                                                          "TRANSITION SUPPORTED",
+                                                          "DUTY OF CARE",
+                                                          "NOT SUPPORTED") ~ carding_status,
+                                    !is.na(games) & grepl("athlete", accreditation, ignore.case = TRUE ) ~ "CAMPAIGN ATHLETE",
+                                    !is.na(games) & is.na(sport) & !grepl("athlete", accreditation, ignore.case = TRUE ) ~ "CAMPAIGN STAFF",
+                                    .default                              = "NOT SUPPORTED"),
+         carding_status = factor(carding_status,
+                                 levels = c("ELITE",
+                                            "ELITE PERFORMANCE - CONVERT",
+                                            "ELITE PERFORMANCE - PROBABLE",
+                                            "POTENTIAL",
+                                            "PERFORMANCE POTENTIAL",
+                                            "FOUNDATION PERFORMANCE - OPPORTUNITY",
+                                            "TALENT CONFIRMATION",
+                                            "TALENT IDENTIFICATION",
+                                            "TRANSITION SUPPORTED",
+                                            "DUTY OF CARE",
+                                            "CAMPAIGN ATHLETE",
+                                            "CAMPAIGN STAFF",
+                                            "NOT SUPPORTED"
+                                            )),
+         training_region = case_when(training_region %in%  c("Auckland",
+                                                             "Canterbury",
+                                                             "Overseas",
+                                                             "Waikato",
+                                                             "Southland",
+                                                             "Tauranga-BOP",
+                                                             "Manawatu-Whanganui",
+                                                             "Otago",
+                                                             "Wellington",
+                                                             "North Island",
+                                                             "Marlborough-Nelson-Tasman",
+                                                             "Northland",
+                                                             "South Island",
+                                                             "Hawkes Bay",
+                                                             "Taranaki",
+                                                             "Gisborne",
+                                                             "Dunedin",
+                                                             "Marlborough",
+                                                             "Other") ~ training_region,
+                                     is.na(training_region) ~ "UNKNOWN",
+                                     .default = "UNKNOWN"),
+         sport = case_when(!is.na(sport) ~ sport,
+                           .default = "STAFF")) %>% 
+  group_by(about) %>%
+  fill(training_region, sport, carding_status, .direction = "updown" ) %>% 
+  ungroup() %>% 
+  select(start_date, about, sport, carding_status, training_region, games, accreditation, campaign_nso)
+
+aps_consults_raw <- ams_medical %>% 
+  rbind(ams_nursing, 
+        ams_physiotherapy, 
+        ams_nutrition, 
+        ams_psychology, 
+        ams_life) %>% 
+  rename(about = user_name_fixed,
+         start_date = start_time) %>%
+  mutate(start_date = round_date(start_date, "day"),
+         start_date = ymd(as.character(start_date))
+  ) %>%
+  rbind(cleaned_nzoc_psychology_df) %>% 
+  mutate(aps_discipline = factor(aps_discipline, 
+                                 levels = c("Medical", 
+                                            "Nurse", 
+                                            "Physiotherapy", 
+                                            "Psychology", 
+                                            "Nutrition", 
+                                            "Life"))) %>% 
+  select(start_date, about, aps_discipline, entered_by_id, clinician_actual) %>% 
+  filter(!(entered_by_id %in% c(27431,
+                                27436,
+                                27511,
+                                38356,
+                                29836,
+                                29845))) %>% 
+  mutate(entered_by = case_when(is.na(clinician_actual) ~ entered_by_id,
+                                .default = NA),
+         about = case_when(about == "Melville Ives Fin" ~ "Finley Melville Ives",
+                           .default = about)) %>% 
+  select(-entered_by_id) %>% 
+  left_join(ams_taps, join_by(about, closest(start_date >= start_date))) %>%
+  rename(start_date = start_date.x) %>%
+  
+  select(-start_date.y) %>%
+  left_join(ams_users, by = c("entered_by" = "user_id")) %>% 
+  rename(about = about.x) %>% 
+  mutate(clinician_actual = case_when(is.na(clinician_actual) ~ about.y,
+                                      .default = clinician_actual),
+         clinician_actual = case_when(clinician_actual == "Frances Stringfellow" ~ "Frances Doyle",
+                                      .default = clinician_actual)
+  ) %>%
+  select(-c(about.y))
+
+
+aps_consults <- aps_consults_raw %>% 
+  filter(aps_discipline %in% select_aps) %>% 
+  group_by(about, start_date, aps_discipline) %>% 
+  reframe(n = n(),
+          sport, training_region, carding_status, games, clinician_actual) %>% 
+  unique() %>% 
+  select(-n) %>% 
+  group_by(about) %>%
+  filter(start_date >= ymd("2024-01-01") &
+           !(about %in% test_group)) %>% 
+  fill(., training_region, .direction = "updown" ) %>% 
+  ungroup() %>% 
+  left_join(staff_location, join_by(clinician_actual == about, closest(start_date >= start_date))) %>% 
+  select(-start_date.y, -end_date) %>% 
+  rename(start_date = start_date.x) %>% 
+  ungroup() %>% 
+  mutate(carding_status = case_when(carding_status %in% not_supported ~ "NOT SUPPORTED",
+                         is.na(carding_status) ~  "NOT SUPPORTED",
+                         is.null(carding_status) ~ "NOT SUPPORTED",
+                         carding_status == "ELITE" ~ "ELITE",
+                         carding_status == "ELITE PERFORMANCE - CONVERT" ~ "ELITE",
+                         carding_status == "ELITE PERFORMANCE - PROBABLE" ~ "ELITE",
+                         carding_status == "POTENTIAL" ~ "POTENTIAL",
+                         carding_status == "PERFORMANCE POTENTIAL" ~ "POTENTIAL",
+                         carding_status == "FOUNDATION PERFORMANCE - OPPORTUNITY" ~ "POTENTIAL",
+                         .default = carding_status),
+         carding_status = factor(carding_status, levels = c("ELITE",
+                                                            "POTENTIAL",
+                                                            "TALENT CONFIRMATION",
+                                                            "TALENT IDENTIFICATION",
+                                                            "CAMPAIGN ATHLETE",
+                                                            "CAMPAIGN STAFF",
+                                                            "TRANSITION SUPPORTED",
+                                                            "DUTY OF CARE",
+                                                            "NOT SUPPORTED"  )),
+         sport = case_when(!is.na(sport) ~ sport,
+                           .default = "STAFF"),
+         training_region = case_when(!is.na(training_region) ~ training_region,
+                           .default = "UNKNOWN")
+  )
+  
+
+aps_consults_de_identify_sport <- aps_consults %>%
+  filter((carding_status == "TALENT CONFIRMATION" |
+          carding_status == "TALENT IDENTIFICATION")) %>% 
+  select(sport, about) %>%  
+  group_by(sport) %>%
+  unique() %>%
+  summarise(n = n()) %>%
+  filter(n <= 5 & sport != "UNKNOWN") %>%
+  dplyr::pull(sport)
+
+aps_consults_de_identify_region <- aps_consults %>%
+  filter((carding_status == "TALENT CONFIRMATION" |
+          carding_status == "TALENT IDENTIFICATION")) %>% 
+  select(training_region, about) %>%
+  group_by(training_region) %>%
+  unique() %>%
+  summarise(n = n()) %>%
+  filter(n <= 5 & training_region != "UNKNOWN") %>%
+  dplyr::pull(training_region)
+  
+
+aps_consults_de_identified_pre_hp <- aps_consults %>% 
+  filter((carding_status == "TALENT CONFIRMATION" |
+          carding_status == "TALENT IDENTIFICATION")) %>%
+  mutate(training_region = ifelse(training_region %in% aps_consults_de_identify_region, "De-identified", training_region),
+         sport           = ifelse(sport %in% aps_consults_de_identify_sport, "De-identified", sport))
+
+
+aps_weekly_caseload <- aps_consults %>% 
+mutate( week = (floor_date(start_date,
+                           unit = "weeks",
+                           week_start = getOption("lubridate.week.start", 1)))) 
+
+aps_weekly_caseload_pre_hp <- aps_consults_de_identified_pre_hp %>% 
+  mutate( week = (floor_date(start_date,
+                         unit = "weeks",
+                         week_start = getOption("lubridate.week.start", 1)))) 
+
+sports_all <- unique(aps_weekly_caseload$sport %>% sort())
+regions_all <- unique(aps_weekly_caseload$training_region %>% sort()) 
+
+sports_pre_hp <- unique(aps_weekly_caseload_pre_hp$sport %>% sort())
+regions_pre_hp <- unique(aps_weekly_caseload_pre_hp$training_region %>% sort())
+
+
+
+```
+  
+\newpage
+  
+  
+## Report Details
+
+This report details case load for the following extended health care and wellness disciplines: **`r format_select_aps(select_aps)`**.
+
+The report includes data from `r ymd(params$report_date_min)` to `r ymd(params$report_date_max)`, a duration of `r str_extract(as.character(as.duration(interval(ymd(params$report_date_min), ymd(params$report_date_max)))), "\\d+(\\.\\d+)? years")`.
+
+## Report Logistics
+
+### Report Development Status
+
+All analytics reports start as a proof-of-concept. Once accepted as a viable concept, it is refined in collaboration with subject matter experts, cycles through data cleaning and debugging, rigorous error checking, refining visuals and tables, and formatting, before a finalized and reliable report is obtained.
+
+```{r report_status_data, echo=FALSE, fig.height=1.5, fig.width=6, message=FALSE, warning=FALSE}
+
+# Progress Bar data
+df_base <- data.frame(x = seq(0, 100, by = 5))
+df_progress <- data.frame(x = seq(0, params$report_dev, by = 5))
+
+# Plot
+progress_plot <- ggplot() + 
+  # Base tiles from 0 to 100
+  geom_tile(data = df_base, aes(x = x, y = 0),
+            width = 5,
+            height = 3,
+            fill = "#D0D0D0",
+            color = "#FFFFFF",
+            linewidth = 1) +
+  
+  # Progress tiles from 0 to params$report_dev
+  geom_tile(data = df_progress, 
+            aes(x = x, y = 0, fill = x), 
+            width = 5, 
+            height = 3,
+            fill = case_when(params$report_dev <= 30  ~ "#C0392B",
+                             params$report_dev <= 50  ~ "#E67E22",
+                             params$report_dev <= 75  ~ munsell::mnsl("10GY 7/6"),
+                             params$report_dev <= 90  ~ munsell::mnsl("10GY 7/10"),
+                             params$report_dev <= 100 ~ munsell::mnsl("10GY 7/14"),
+                             .default                 = "#007DBA"),
+            color = "#FFFFFF",
+            linewidth = 1) +
+  theme_minimal() +
+  coord_cartesian(ylim = c(-2, 2), xlim = c(-5, 105)) +
+  labs(x = NULL, 
+       y = NULL,
+       caption = paste0(case_when(params$report_dev <= 30 ~  "This report is a proof of concept only",
+                                  params$report_dev <= 50 ~  "This report is a proof of concept and is in early development stage with subject matter experts.",
+                                  params$report_dev <= 75 ~  "This report was accepted as proof of concept and is under development with subject matter experts.",
+                                  params$report_dev <= 90 ~  "This report is ready for controlled deployment. However, it may still be subject to edge case errors",
+                                  params$report_dev <= 95 ~  "This report is is production ready",
+                                  params$report_dev == 100 ~ "This report is live"
+             ))) +
+  theme(plot.background  = element_rect(fill = "transparent", colour = "#FFFFFF"),
+        panel.background = element_rect(fill = "transparent", colour = "#FFFFFF"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.y      = element_blank(), 
+        axis.ticks.y     = element_blank()) +
+  scale_x_continuous(breaks = seq(0, 100, by = 10), 
+                     labels = function(x) paste0(x, "%"))
+
+progress_plot
+
+```
+
+### Reporting Errors
+
+For any errors or irregularities in your Report, please log a ticket detailing the error in as much detail as possible to the AMS Service Desk ([ams\@hpsnz.org.nz](mailto:ams@hpsnz.org.nz){.email}).
+
+### Data
+
+The estimate of APS support is based on the following records that should track unique interactions with the APS team:
+
+-   **Medical consultations**: these are recorded with every visit by an athlete in person or electronically (e.g. telehealth).
+-   **Nursing consultations**: these are recorded with every visit by an athlete in person or electronically
+-   **Physiotherapy treatment notes**: these are recorded with every visit by an athlete in person electronically
+-   **Psychology consultations**: these are recorded with every visit by an athlete in person or electronically
+-   **Nutrition consultation**: these are recorded with every visit by an athlete in person or electronically
+-   **Performance Life communications**: these are recorded with every visit by an athlete in person or electronically
+
+Note: There is an underlying assumption that practitioners will link diagnostic tools (e.g. PHEs, DASS, SADA, radiology, pathology, body composition, transition readiness, etc.) to a consultation record, and not use the diagnostic tool as a surrogate for a consultation record.
+
+### Cleaning
+
+Data cleaning addressed the following common problems:
+
+-   blank records
+-   identifying unique records when multiple records were entered on the same date.
+
+### Considerations
+
+Interpretation of data by Subject Matter Expert (SME) is critical.
+
+-   Medical data by Director of Performance Health
+-   Physiotherapy data by Physiotherapy Lead and Director of Performance Health
+-   Psychology data by Psychology Head of Discipline
+-   Nutrition data by Nutrition Head of Discipline
+-   Performance Life data by Performance Life Head of Discipline
+
+
+```{r, echo=FALSE, results='asis'}
+
+if (params$pathways_only_data) {
+  cat('### De-Identifying Pathways Data',
+      'Pathways sports and regions with less than 5 individuals at the Talent Id or Talent Confirmation levels are de-identified. Additionally, where a sport or training region was not provided these were assigned as "UNKNOWN".',
+      
+      'These sports and regions de-identified include:',
+      '- **Sports**: ',
+      sep = '\n\n')
+  
+      cat(aps_consults_de_identify_sport, sep = ', ')
+      
+      cat('\n\n',
+          '- **Regions**: ')
+      
+      cat(aps_consults_de_identify_region, sep = ', ')
+      
+      
+} else {
+  cat("")
+}
+
+```
+
+
+\newpage
+
+# All Records
+
+HPSNZ supported athletes, touring athletes, including campaign athletes and staff (e.g. Olympic Games, Paralympic Games, etc.)
+
+## Summaries
+
+```{r case_load, echo=FALSE, fig.height=7, fig.width=6, message=FALSE, warning=FALSE}
+
+
+
+plot_data <- aps_consults %>%
+  group_by(aps_discipline, 
+           carding_status) %>% 
+  reframe(n = n()) 
+
+plot_data %>% 
+  ggplot(aes(aps_discipline, n , fill = aps_discipline, label = n)) + 
+  geom_col( colour = "#333F4880") +
+  coord_flip() +
+  ylim(0, plot_data %>% mutate(n2 = 1100*ceiling(n/1100)) %>% select(n2) %>% max()) +
+  geom_text(y = 0.9*plot_data %>% mutate(n2 = 1100*ceiling(n/1100)) %>% select(n2) %>% max(),
+            hjust = 0,
+            size = 3) +
+  facet_wrap(~carding_status, ncol= 2) +
+  labs(title = "Overall HPSNZ Health & Wellness Case Load",
+       fill = "Support team",
+       x = "APS Discipline",
+       y = "Consults") +
+  scale_x_discrete(limits=rev) +
+  theme(#plot.background = element_rect(colour = "#000000", fill=NA, size=1),
+        legend.justification='left',
+        legend.position = "bottom") +
+  scale_fill_aps() +
+  { if(params$pathways_only_data) {
+    geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
+              data = ~ subset(., carding_status %in% c("TALENT IDENTIFICATION",
+                                                       "TALENT CONFIRMATION")), 
+              colour = "#DA291C", 
+              fill = "#DA291C80",  
+              alpha = 0.05, 
+              inherit.aes = FALSE)
+  } else {
+    NULL
+  }
+  }
+
+```
+
+```{r aps_summaries_region, echo=FALSE, message=FALSE, warning=FALSE}
+
+aps_consults %>% 
+  group_by(aps_discipline) %>% 
+  reframe(t = n(),
+          training_region) %>% 
+
+  group_by(aps_discipline, training_region) %>% 
+  reframe(t,
+          n = n(),
+          pct = n/t*100
+  ) %>% 
+  unique() %>% 
+  arrange(aps_discipline, desc(n)) %>% 
+  select(aps_discipline, t, training_region,n, pct) %>% 
+  flextable() %>% 
+  set_caption(caption = as_paragraph(as_b("APS Health and Wellbeing support by region")),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(training_region = "Region",
+                    t = "total",
+                    aps_discipline = "Support",
+                    n = "#",
+                    pct = "%") %>%
+  add_footer_lines(paste0(nrow(aps_consults), 
+                          " total consultations."))  %>%
+  set_formatter(pct = function(x) sprintf( "%0.01f%%", x ) ) %>% 
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left","center","left","center", "center"), part = "all") %>%
+  merge_v( j = "aps_discipline", target = c("aps_discipline", "t"), part = "body", combine = TRUE) %>% 
+  merge_v( j = "t", target = "t", part = "body", combine = TRUE) %>%
+  valign(j = c(1:2), valign = "top", part = "all") %>%
+  bg(
+    bg = flex_colourer_red,
+    j = c("pct"),
+    part = "body") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = NULL, value = TRUE, part = "body") %>% 
+  paginate(group = "aps_discipline", group_def = "rle") %>% 
+  autofit()
+
+```
+
+\newpage
+
+```{r aps_summaries_sport, echo=FALSE, message=FALSE, warning=FALSE}
+
+  
+aps_consults %>% 
+  group_by(aps_discipline) %>% 
+  reframe(t = n(),
+          sport) %>% 
+
+  group_by(aps_discipline, sport) %>% 
+  reframe(t,
+          n = n(),
+          pct = n/t*100
+          ) %>% 
+  unique() %>% 
+  arrange(aps_discipline, desc(n)) %>% 
+  select(aps_discipline, t, sport,n, pct) %>% 
+  flextable() %>% 
+  
+  set_caption(caption = as_paragraph(as_b("APS Health and Wellbeing support by sport")),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(sport = "Sport",
+                    t = "Total",
+                    aps_discipline = "Support",
+                    n = "#",
+                    pct = "%") %>%
+  add_footer_lines(paste0(nrow(aps_consults), 
+                          " total consultations."))  %>%
+  set_formatter(pct = function(x) sprintf( "%0.01f%%", x ) ) %>% 
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left","center", "left","center", "center"), part = "all") %>%
+  merge_v( j = "aps_discipline", target = c("aps_discipline", "t"), part = "body", combine = TRUE) %>% 
+  merge_v( j = "t", target = c("t"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:2), valign = "top", part = "all") %>%
+  bg(
+    bg = flex_colourer_red,
+    j = c("pct"),
+    part = "body") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = NULL, value = TRUE, part = "body") %>% 
+  paginate(group = "aps_discipline", group_def = "rle") %>% 
+  autofit()
+  
+```
+
+\newpage
+
+## Overall case load
+
+```{r case_load_weekly, echo=FALSE, fig.height=3, fig.width=6, message=FALSE, warning=FALSE}
+
+aps_weekly_caseload %>% 
+  # distinct(about) %>% 
+  # mutate(week = map2(as.Date(ymd(params$report_date_min)),
+  #                    as.Date(ymd(params$report_date_max)), 
+  #                    seq, 
+  #                    by = "1 week")) %>% 
+  # unnest(cols = c(week)) %>% 
+  # distinct(about, week) %>% 
+  # left_join(aps_weekly_caseload, 
+  #           by = c("about", "week"),
+  #           keep = TRUE) %>% 
+  # rename(week = week.x, about = about.x) %>% 
+  # select(-week.y, - about.y) %>% 
+  group_by(week, 
+           aps_discipline) %>% 
+  reframe(n = n()) %>% 
+  filter(!is.na(aps_discipline)) %>% 
+  ggplot(aes(week, n , fill = aps_discipline)) + 
+  geom_col( colour = "#333F4880") +
+  labs(title = "Overall Case Load",
+             fill = "Support team",
+             x = "Date",
+             y = "Consults") +
+  scale_y_continuous(breaks = ~round(unique(pretty(.)))) +
+  scale_fill_aps() +
+  theme(#plot.background = element_rect(colour = "#000000", fill=NA, size=1),
+        legend.justification='left',
+        legend.position = "bottom")
+
+```
+
+### Case load by sport
+
+```{r case_load_sport, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
+
+for (i in seq_along(sports_all)) {
+
+      filtered_data <- aps_weekly_caseload %>% 
+        filter(sport == sports_all[i]) %>% 
+        distinct(about) %>%
+        mutate(week = map2(as.Date(ymd(params$report_date_min)),
+                           as.Date(ymd(params$report_date_max)),
+                           seq,
+                           by = "1 week")) %>%
+        unnest(cols = c(week)) %>%
+        distinct(about, week) %>%
+        left_join(aps_weekly_caseload,
+                  by = c("about", "week"),
+                  keep = TRUE) %>%
+        rename(week = week.x, about = about.x) %>%
+        select(-week.y, - about.y) %>%
+        group_by(week, 
+                 aps_discipline) %>% 
+        reframe(n = n())
+      
+      x <- filtered_data %>% 
+        filter(!is.na(aps_discipline)) %>% 
+        ggplot(aes(week, n , fill = aps_discipline)) +
+        geom_col( colour = "#333F4880",
+                  # position = position_dodge(preserve = "single")
+                  width = 5
+                  ) +
+        labs(title = paste0(sports_all[i]),
+             fill = "Support team",
+             x = "Date",
+             y = "Consults") +
+        scale_x_date(limits = c(min(aps_weekly_caseload$week),
+                                 max(aps_weekly_caseload$week)), 
+                     expand = c(0,0)
+                     ) +
+        scale_y_continuous(breaks = ~round(unique(pretty(.)))) +
+        scale_fill_aps()
+      
+      # cat(paste(sports_all[i]))
+      
+      print(x)
+      
+
+      
+      }
+
+```
+
+### Case load by region
+
+```{r case_load_region, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
+
+for (i in seq_along(regions_all)) {
+
+      filtered_data <- aps_weekly_caseload %>% 
+        filter(training_region == regions_all[i]) %>% 
+        distinct(about) %>%
+        mutate(week = map2(as.Date(ymd(params$report_date_min)),
+                           as.Date(ymd(params$report_date_max)),
+                           seq,
+                           by = "1 week")) %>%
+        unnest(cols = c(week)) %>%
+        distinct(about, week) %>%
+        left_join(aps_weekly_caseload,
+                  by = c("about", "week"),
+                  keep = TRUE) %>%
+        rename(week = week.x, about = about.x) %>%
+        select(-week.y, - about.y) %>%
+        group_by(week, 
+                 aps_discipline) %>% 
+        reframe(n = n())
+      
+      x <- filtered_data %>% 
+        filter(!is.na(aps_discipline)) %>% 
+        ggplot(aes(week, n , fill = aps_discipline)) +
+        geom_col( colour = "#333F4880",
+                  width = 5) +
+        labs(title = paste0(regions_all[i]),
+             fill = "Support team",
+             x = "Date",
+             y = "Consults") + 
+        ylim(min(aps_weekly_caseload$week), max(aps_weekly_caseload$week)) +
+        scale_y_continuous(breaks = ~round(unique(pretty(.)))) +
+        scale_fill_aps()
+      
+      # cat(paste(regions[i]))
+      
+      print(x)
+      
+      }
+
+```
+
+\newpage
+
+# Campaign Support
+
+Support for all athletes identified for campaigns.
+
+
+HPSNZ supported the following campaign events: 
+
+```{r campaign_events, echo=FALSE, fig.width=6, message=FALSE, warning=FALSE}
+
+ungroup(ams_taps) %>% 
+  filter(!is.na(games) & between(start_date, ymd(params$report_date_min), ymd(params$report_date_max))) %>% 
+  select(games) %>% 
+  unique() %>% 
+  flextable() %>%
+  set_header_labels(games = "Campaigns") %>%
+  add_footer_lines(paste0("NOTE: Summer Olympic Games psychology notes are included in the summary.")) %>% 
+  width(width = 8, unit = "cm") %>% 
+  fit_to_width(max_width = 12, inc = 1L, max_iter = 20, unit = "cm")
+
+
+
+```
+
+## Campaign support summaries
+
+```{r case_load_campaign, echo=FALSE, fig.height=8, fig.width=6, message=FALSE, warning=FALSE}
+
+aps_consults_campaigns <- aps_consults %>% 
+  ungroup() %>% 
+  filter(!is.na(games) & 
+           between(start_date, ymd(params$report_date_min), ymd(params$report_date_max)))
+
+aps_campaign_weekly_caseload <- aps_consults_campaigns %>% 
+mutate( week = (floor_date(start_date,
+                           unit = "weeks",
+                           week_start = getOption("lubridate.week.start", 1)))) 
+
+plot_data <- aps_consults_campaigns %>% 
+  group_by(games, aps_discipline) %>% 
+  reframe(n = n())
+
+plot_data %>% 
+  ggplot(aes(aps_discipline, n , fill = aps_discipline, label = n)) + 
+  geom_col( colour = "#333F4880") +
+  coord_flip() +
+  ylim(0, plot_data %>% mutate(n2 = 100*ceiling(n/100)) %>% select(n2) %>% max()) +
+  geom_text(y = 0.95 * plot_data %>% mutate(n2 = 100*ceiling(n/100)) %>% select(n2) %>% max(),
+            hjust = 0,
+            size = 3) +
+  facet_wrap(~games, ncol= 1) +
+  labs(title = "Campaign Level Support",
+       fill = "Support team",
+       x = "APS Discipline",
+       y = "Consults") +
+  scale_x_discrete(limits=rev) +
+  scale_fill_aps() +
+  theme(#plot.background = element_rect(colour = "#000000", fill=NA, size=1),
+        legend.justification='left',
+        legend.position = "bottom",
+        legend.title.position = "left") + 
+  guides(fill = guide_legend(nrow = 2))
+
+```
+  
+\newpage  
+  
+```{r aps_summaries_campaign, echo=FALSE, message=FALSE, warning=FALSE}
+
+aps_consults_campaigns %>% 
+  group_by(aps_discipline) %>% 
+  reframe(t = n(),
+          games) %>% 
+
+  group_by(aps_discipline, games) %>% 
+  reframe(t,
+          n = n(),
+          pct = n/t*100
+          ) %>% 
+  unique() %>% 
+  arrange(aps_discipline, desc(n)) %>% 
+  select(aps_discipline, t, games,n, pct) %>% 
+  flextable() %>% 
+  
+  set_caption(caption = as_paragraph(as_b("Campaign APS Extended Health support")),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(games = "Campaign",
+                    t = "Total",
+                    aps_discipline = "Support",
+                    n = "#",
+                    pct = "%") %>%
+  add_footer_lines(paste0(nrow(aps_consults_campaigns), 
+                          " total consultations."))  %>%
+  set_formatter(pct = function(x) sprintf( "%0.01f%%", x ) ) %>% 
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left","center", "left","center", "center"), part = "all") %>%
+  merge_v( j = "aps_discipline", target = c("aps_discipline", "t"), part = "body", combine = TRUE) %>% 
+  merge_v( j = "t", target = c("t"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:2), valign = "top", part = "all") %>%
+  bg(
+    bg = flex_colourer_red,
+    j = c("pct"),
+    part = "body") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = NULL, value = TRUE, part = "body") %>% 
+  paginate(group = "aps_discipline", group_def = "rle") %>% 
+  autofit()
+
+```
+
+\newpage
+
+```{r aps_summaries_sport_campaign, echo=FALSE, message=FALSE, warning=FALSE}
+
+  
+aps_consults_campaigns %>% 
+  group_by(aps_discipline) %>% 
+  reframe(t = n(),
+          sport) %>% 
+  group_by(aps_discipline, sport) %>% 
+  reframe(t,
+          n = n(),
+          pct = n/t*100
+          ) %>% 
+  unique() %>% 
+  arrange(aps_discipline, desc(n)) %>% 
+  select(aps_discipline, t, sport,n, pct) %>% 
+  flextable() %>% 
+  
+  set_caption(caption = as_paragraph(as_b("Campaign APS Extended Health support by sport")),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(sport = "Sport",
+                    t = "Total",
+                    aps_discipline = "Support",
+                    n = "#",
+                    pct = "%") %>%
+  add_footer_lines(paste0(nrow(aps_consults), 
+                          " total consultations."))  %>%
+  set_formatter(pct = function(x) sprintf( "%0.01f%%", x ) ) %>% 
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left","center", "left","center", "center"), part = "all") %>%
+  merge_v( j = "aps_discipline", target = c("aps_discipline", "t"), part = "body", combine = TRUE) %>% 
+  merge_v( j = "t", target = c("t"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:2), valign = "top", part = "all") %>%
+  bg(
+    bg = flex_colourer_red,
+    j = c("pct"),
+    part = "body") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = NULL, value = TRUE, part = "body") %>% 
+  paginate(group = "aps_discipline", group_def = "rle") %>% 
+  autofit()
+  
+```
+
+\newpage
+
+## Campaign case load
+
+Only data on the Olympic and Paralympic Games is presented in these visuals.
+
+```{r case_load_weekly_campaign, echo=FALSE, fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
+
+aps_campaign_weekly_caseload %>% 
+  filter(games %in% c("Olympic Summer Games", "Paralympic Summer Games")) %>% 
+  group_by(week, 
+           aps_discipline,
+           games) %>% 
+  reframe(n = n()) %>%
+  unique() %>% 
+  filter(!is.na(aps_discipline))  %>% 
+  ggplot(aes(week, n , fill = aps_discipline)) + 
+  geom_col( colour = "#333F4880",
+            width = 5) +
+  labs(title = "Overall Campaign Case Load",
+             fill = "Support team",
+             x = "Date",
+             y = "Consults") +
+  scale_fill_aps() +
+  facet_wrap(~games, ncol = 1, scale = "free_y")
+
+```
+
+### Campaign case load by sport
+
+```{r case_load_sport_campaign, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
+
+sports_campaign <- aps_campaign_weekly_caseload$sport %>% unique() %>% sort()
+
+for (i in seq_along(sports_campaign)) {
+
+      filtered_data <- aps_campaign_weekly_caseload %>% 
+        filter(sport == sports_campaign[i]) %>% 
+        distinct(about) %>%
+        mutate(week = map2(as.Date(ymd(params$report_date_min)),
+                           as.Date(ymd(params$report_date_max)),
+                           seq,
+                           by = "1 week")) %>%
+        unnest(cols = c(week)) %>%
+        distinct(about, week) %>%
+        left_join(aps_campaign_weekly_caseload,
+                  by = c("about", "week"),
+                  keep = TRUE) %>%
+        rename(week = week.x, about = about.x) %>%
+        select(-week.y, - about.y) %>%
+        group_by(week, 
+                 aps_discipline) %>% 
+        reframe(n = n())
+      
+      x <- filtered_data %>% 
+        filter(!is.na(aps_discipline)) %>% 
+        ggplot(aes(week, n , fill = aps_discipline)) +
+        geom_col( colour = "#333F4880") +
+        labs(title = paste0(sports_campaign[i]),
+             fill = "Support team",
+             x = "Date",
+             y = "Consults") +
+        scale_y_continuous(breaks = ~round(unique(pretty(.)))) +
+        scale_fill_aps()
+      
+      # cat(paste(sports[i]))
+      
+      print(x)
+      
+
+      
+      }
+
+```
+
+```{r, echo=FALSE, results='asis'}
+
+if (params$pathways_only_data) {
+  cat('\\newpage',
+      '# Pathways Athletes',
+      'HPSNZ Talent ID and Talent Confirmation athletes only',
+      '## Pathways summaries',
+      sep = '\n\n')
+} else {
+  cat("")
+}
+
+```
+
+
+
+```{r case_load_pre_hp, echo=FALSE, fig.height=4, fig.width=6, eval=params$pathways_only_data, message=FALSE, warning=FALSE}
+
+not_supported <- c("NA",
+                   "--",
+                   "  ",
+                   "",
+                   "UNVERIFIED",
+                   "DECARDED",
+                   "NOT SUPPORTED")
+
+aps_consults_de_identified_pre_hp <- aps_consults_de_identified_pre_hp %>% 
+  ungroup() %>% 
+  filter((carding_status == "TALENT CONFIRMATION" |
+          carding_status == "TALENT IDENTIFICATION")) 
+
+plot_data <- aps_consults_de_identified_pre_hp %>%
+  mutate(carding_status = case_when(carding_status %in% not_supported ~ "NOT SUPPORTED",
+                         is.na(carding_status) ~  "NOT SUPPORTED",
+                         is.null(carding_status) ~ "NOT SUPPORTED",
+                         carding_status == "ELITE PERFORMANCE - CONVERT" ~ "CONVERT",
+                         carding_status == "ELITE PERFORMANCE - PROBABLE" ~ "PROBABLE",
+                         carding_status == "PERFORMANCE POTENTIAL" ~ "POTENTIAL",
+                         carding_status == "FOUNDATION PERFORMANCE - OPPORTUNITY" ~ "OPPORTUNITY",
+                         .default = carding_status),
+         carding_status = factor(carding_status, levels = c("CONVERT",
+                                                            "PROBABLE",
+                                                            "POTENTIAL",
+                                                            "OPPORTUNITY",
+                                                            "TALENT CONFIRMATION",
+                                                            "TALENT IDENTIFICATION",
+                                                            "CAMPAIGN ATHLETE",
+                                                            "CAMPAIGN STAFF",
+                                                            "TRANSITION SUPPORTED",
+                                                            "DUTY OF CARE",
+                                                            "NOT SUPPORTED"  ))) %>% 
+  group_by(aps_discipline, 
+           carding_status) %>% 
+  reframe(n = n())
+
+plot_data %>% 
+  ggplot(aes(aps_discipline, n , fill = aps_discipline, label = n)) + 
+  geom_col( colour = "#333F4880") +
+  coord_flip() +
+  ylim(0, plot_data %>% mutate(n2 = 100*ceiling(n/100)) %>% select(n2) %>% max()) +
+  geom_text(y = 0.95 * plot_data %>% mutate(n2 = 100*ceiling(n/100)) %>% select(n2) %>% max(),
+            hjust = 0,
+            size = 3) +
+  facet_wrap(~carding_status, ncol= 2) +
+  labs(title = "Pre-HP HPSNZ Health & Wellness Case Load",
+       fill = "Support team",
+       x = "APS Discipline",
+       y = "Consults") +
+  scale_x_discrete(limits=rev) +
+  scale_fill_aps() +
+  theme(plot.background = element_rect(colour = "#000000", fill=NA, size=1),
+        legend.justification='left',
+        legend.position = "bottom")
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (params$pathways_only_data) {
+  cat("\\newpage\n")
+} else {
+  cat("")
+}
+
+```  
+
+  
+```{r aps_summaries_region_pre_hp, echo=FALSE, eval=params$pathways_only_data, message=FALSE, warning=FALSE}
+
+aps_consults_de_identified_pre_hp %>% 
+  group_by(aps_discipline) %>% 
+  reframe(t = n(),
+          training_region) %>% 
+
+  group_by(aps_discipline, training_region) %>% 
+  reframe(t,
+          n = n(),
+          pct = n/t*100
+          ) %>% 
+  unique() %>% 
+  arrange(aps_discipline, desc(n)) %>% 
+  select(aps_discipline, t, training_region,n, pct) %>% 
+  flextable() %>% 
+  
+  set_caption(caption = as_paragraph(as_b("Pre-HP APS Health and Wellbeing support by training region")),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(training_region = "Region",
+                    t = "Total",
+                    aps_discipline = "Support",
+                    n = "#",
+                    pct = "%") %>%
+  add_footer_lines(paste0(nrow(aps_consults_de_identified_pre_hp), 
+                          " total consultations."))  %>%
+  set_formatter(pct = function(x) sprintf( "%0.01f%%", x ) ) %>% 
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left","center", "left","center", "center"), part = "all") %>%
+  merge_v( j = "aps_discipline", target = c("aps_discipline", "t"), part = "body", combine = TRUE) %>% 
+  merge_v( j = "t", target = c("t"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:2), valign = "top", part = "all") %>%
+  bg(
+    bg = flex_colourer_red,
+    j = c("pct"),
+    part = "body") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = NULL, value = TRUE, part = "body") %>% 
+  paginate(group = "aps_discipline", group_def = "rle") %>% 
+  autofit()
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (params$pathways_only_data) {
+  cat("\\newpage\n")
+} else {
+  cat("")
+}
+
+```
+
+```{r aps_summaries_sport_pre_hp, echo=FALSE, eval=params$pathways_only_data, message=FALSE, warning=FALSE}
+
+  
+aps_consults_de_identified_pre_hp %>% 
+  group_by(aps_discipline) %>% 
+  reframe(t = n(),
+          sport) %>% 
+  group_by(aps_discipline, sport) %>% 
+  reframe(t,
+          n = n(),
+          pct = n/t*100
+          ) %>% 
+  unique() %>% 
+  arrange(aps_discipline, desc(n)) %>% 
+  select(aps_discipline, t, sport,n, pct) %>% 
+  flextable() %>% 
+  
+  set_caption(caption = as_paragraph(as_b("Pre-HP APS Health and Wellbeing support by sport")),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(sport = "Sport",
+                    t = "Total",
+                    aps_discipline = "Support",
+                    n = "#",
+                    pct = "%") %>%
+  add_footer_lines(paste0(nrow(aps_consults), 
+                          " total consultations."))  %>%
+  set_formatter(pct = function(x) sprintf( "%0.01f%%", x ) ) %>% 
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left","center", "left","center", "center"), part = "all") %>%
+  merge_v( j = "aps_discipline", target = c("aps_discipline", "t"), part = "body", combine = TRUE) %>% 
+  merge_v( j = "t", target = c("t"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:2), valign = "top", part = "all") %>%
+  bg(
+    bg = flex_colourer_red,
+    j = c("pct"),
+    part = "body") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = NULL, value = TRUE, part = "body") %>% 
+  paginate(group = "aps_discipline", group_def = "rle") %>% 
+  autofit()
+  
+```
+
+```{r, echo=FALSE, results='asis'}
+if (params$pathways_only_data) {
+    cat("\\newpage\n",
+      "## Pathways case load\n")
+} else {
+  cat("")
+}
+
+```
+
+
+
+```{r case_load_weekly_pre_hp, echo=FALSE, fig.height=3, fig.width=6, eval=params$pathways_only_data, message=FALSE, warning=FALSE}
+
+aps_weekly_caseload_pre_hp %>% 
+  # distinct(about) %>% 
+  # mutate(week = map2(as.Date(ymd(params$report_date_min)),
+  #                    as.Date(ymd(params$report_date_max)), 
+  #                    seq, 
+  #                    by = "1 week")) %>% 
+  # unnest(cols = c(week)) %>% 
+  # distinct(about, week) %>% 
+  # left_join(aps_weekly_caseload_pre_hp, 
+  #           by = c("about", "week"), 
+  #           keep = TRUE) %>% 
+  # rename(week = week.x, about = about.x) %>% 
+  # select(-week.y, - about.y) %>% 
+  group_by(week, 
+           aps_discipline) %>% 
+  reframe(n = n()) %>% 
+  filter(!is.na(aps_discipline))  %>% 
+  ggplot(aes(week, n , fill = aps_discipline)) + 
+  geom_col( colour = "#333F4880",
+            width = 5) +
+  labs(title = "Overall Case Load",
+             fill = "Support team",
+             x = "Date",
+             y = "Consults") +
+  scale_fill_aps() +
+  theme(plot.background = element_rect(colour = "#000000", fill=NA, size=1)
+  )
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (params$pathways_only_data) {
+  cat("\\newpage\n",
+      "### Pathways case load by sport\n")
+} else {
+  cat("")
+}
+
+```
+
+
+```{r case_load_sport_pre_hp, echo=FALSE, fig.height=2, fig.width=6, eval=params$pathways_only_data, message=FALSE, warning=FALSE}
+
+for (i in seq_along(sports_pre_hp)) {
+
+      filtered_data <- aps_weekly_caseload_pre_hp %>% 
+        filter(sport == sports_pre_hp[i]) %>% 
+        # distinct(about) %>% 
+        # mutate(week = map2(as.Date(ymd(params$report_date_min)),
+        #                    as.Date(ymd(params$report_date_max)), 
+        #                    seq, 
+        #                    by = "1 week")) %>% 
+        # unnest(cols = c(week)) %>% 
+        # distinct(about, week) %>% 
+        # left_join(aps_weekly_caseload_pre_hp, 
+        #           by = c("about", "week"), 
+        #           keep = TRUE) %>% 
+        # rename(week = week.x, about = about.x) %>% 
+        # select(-week.y, - about.y) %>% 
+        group_by(week, 
+                 aps_discipline) %>% 
+        reframe(n = n())
+      
+      x <- filtered_data %>% 
+        filter(!is.na(aps_discipline)) %>% 
+        ggplot(aes(week, n , fill = aps_discipline)) +
+        geom_col( colour = "#333F4880") +
+        labs(title = paste0(sports_pre_hp[i]),
+             fill = "Support team",
+             x = "Date",
+             y = "Consults") +
+        scale_y_continuous(breaks = ~round(unique(pretty(.)))) +
+        scale_fill_aps()
+      
+      # cat(paste(sports[i]))
+      
+      print(x)
+      
+
+      
+      }
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (params$pathways_only_data) {
+  cat("\\newpage\n",
+      "### Case load by region\n")
+} else {
+  cat("")
+}
+
+```
+
+
+```{r case_load_region_pre_hp, echo=FALSE, fig.height=2, fig.width=6, eval=params$pathways_only_data, message=FALSE, warning=FALSE}
+
+for (i in seq_along(regions_pre_hp)) {
+
+      filtered_data <- aps_weekly_caseload_pre_hp %>% 
+        filter(training_region == regions_pre_hp[i]) %>% 
+
+        group_by(week, 
+                 aps_discipline) %>% 
+        reframe(n = n())
+      
+      x <- filtered_data %>%
+        filter(!is.na(aps_discipline)) %>% 
+        ggplot(aes(week, n , fill = aps_discipline)) +
+        geom_col( colour = "#333F4880") +
+        labs(title = paste0(regions_pre_hp[i]),
+             fill = "Support team",
+             x = "Date",
+             y = "Consults") +
+        scale_y_continuous(breaks = ~round(unique(pretty(.)))) +
+          scale_fill_aps() 
+      
+      # cat(paste(regions[i]))
+      
+      print(x)
+      
+      }
+
+```
+
+
+```{r, echo=FALSE, results='asis'}
+if (params$unsupported_data) {
+    cat("\\newpage\n",
+      "# APPENDIX 1. Non-supported individuals receiving Health and Wellness support\n",
+      "There are ", aps_consults %>% filter(as.numeric(carding_status)>7) %>% select(about) %>% unique() %>% nrow(), " un-supported individuals who received APS support in: ", format_select_aps(select_aps), ".\n\n",
+      "_NOTE_: Due to the potentially sensitive nature of this data, please request a report specific to your discipline. However, please note that data around campaigns is limited. As such, some of these individuals may be included in error, or misidentified, due to the complexity and dynamic nature of campaign and TAPS support tracking.",
+      "\\newpage\n")
+} else {
+  cat("")
+}
+
+```
+  
+
+
+```{r unsupported_users, eval=params$unsupported_data, fig.width=6, message=FALSE, warning=FALSE}
+
+
+aps_consults %>% 
+  filter(as.numeric(carding_status)>7) %>% 
+  group_by(aps_discipline) %>% 
+  reframe(n = n()) %>% 
+  flextable() %>% 
+  set_caption(caption = as_paragraph(as_b("Summary of APS Health and Wellbeing support for unsupported individuals")),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(aps_discipline = "Support",
+                    n              = "Individuals") %>%
+  add_footer_lines(paste0(nrow(aps_consults %>% 
+                                 filter(as.numeric(carding_status)>7) %>% 
+                                 filter(aps_discipline %in% select_aps)), 
+                          " total consultations (note some individuals treated 2+ times across multiple disciplines).")) %>% 
+  width(width = 6, unit = "cm") %>% 
+  fit_to_width(max_width = 12, inc = 1L, max_iter = 20, unit = "cm")
+
+aps_consults %>% 
+  filter(as.numeric(carding_status)>7) %>% 
+  filter(aps_discipline %in% select_aps) %>% 
+  group_by(about, aps_discipline, games, sport, clinician_actual) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+  mutate(details = paste(sport, games, sep = " | ")) %>% 
+  select(aps_discipline, about, details, clinician_actual) %>%
+  arrange(aps_discipline, about, clinician_actual, details) %>% 
+  flextable() %>% 
+  set_caption(caption = as_paragraph(as_b("Non-supported individuals receiving APS Health and Wellbeing support")),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(about = "Name",
+                    details = "NSO & Campaign",
+                    aps_discipline = "Support",
+                    clinician_actual = "Practitioner") %>%
+  add_footer_lines(paste0(nrow(aps_consults %>% 
+                                 filter(as.numeric(carding_status)>7) %>% 
+                                 filter(aps_discipline %in% select_aps)), 
+                          " total consultations."))  %>%
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left"), part = "all") %>%
+  merge_v( j = "aps_discipline", part = "body", combine = TRUE) %>% 
+  valign(j = c(1:4), valign = "top", part = "all") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = 1, value = TRUE, part = "body") %>% 
+  paginate(group = "about", group_def = "rle") %>% 
+  autofit() %>% 
+  fit_to_width(max_width = 6, inc = 1L, max_iter = 20, unit = "in")
+
+unsupported_tx <- aps_consults %>% 
+  filter(as.numeric(carding_status)>7) %>% 
+  group_by(about, aps_discipline, games, sport, clinician_actual) %>% 
+  filter(row_number() == 1)
+
+write.csv(unsupported_tx, file = "2024-2025_unsupported_tx.csv")
+
+```

@@ -1,0 +1,16 @@
+default:
+  hpsnz_snowflake:
+    driver: "SnowflakeDSIIDriver"
+    dsn: "snowflake_hpsnz_ds"
+    server: "urhweia-hpsnz.snowflakecomputing.com"
+    UID: "Alan.Carlsson@hpsnz.org.nz"
+    authenticator: "externalbrowser"
+    database: "compute_wh"
+    
+  sportnz_snowflake:
+    driver: "SnowflakeDSIIDriver"
+    dsn: "snowflake_sportnz_ds"
+    server: "urhweia-sportnz.snowflakecomputing.com"
+    UID: "Alan.Carlsson@hpsnz.org.nz"
+    authenticator: "externalbrowser"
+    database: "compute_wh"    
