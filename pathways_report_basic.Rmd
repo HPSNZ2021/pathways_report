@@ -42,8 +42,11 @@ params:
     input: select
     choices: [Medical, Nurse, Physiotherapy, Psychology, Nutrition, Life]
     multiple: yes
+  pathways_only_report:
+    label: Create report for pathways team only?
+    value: FALSE
   pathways_only_data:
-    label: Include Pathways data?
+    label: Include pathways data?
     value: FALSE
   unsupported_data:
     label: Include Appendix with detail on unsupported individuals?
@@ -244,7 +247,7 @@ flex_colourer_green <- col_numeric(
   palette = c("#FFFFFF00",mnsl("10GY 7/6"), mnsl("10GY 7/10"), mnsl("10GY 7/14")),
   domain = c(0, 25, 50, 100))
 
-hpsnz_flex_border <- flextable::fp_border(color = "#333F38", width = 0.5)
+hpsnz_flex_border <- fp_border(color = "#333F38", width = 0.5)
 
 fpp <- officer::fp_par(text.align = "left", padding = 3)
 
@@ -1023,7 +1026,7 @@ HPSNZ supported athletes, touring athletes, including campaign athletes and staf
 
 ## Summaries
 
-```{r case_load, echo=FALSE, fig.height=7, fig.width=6, message=FALSE, warning=FALSE}
+```{r case_load, eval=!params$pathways_only_report, echo=FALSE, fig.height=7, fig.width=6, message=FALSE, warning=FALSE}
 
 
 
@@ -1065,7 +1068,7 @@ plot_data %>%
 
 ```
 
-```{r aps_summaries_region, echo=FALSE, message=FALSE, warning=FALSE}
+```{r aps_summaries_region, eval=!params$pathways_only_report, echo=FALSE, message=FALSE, warning=FALSE}
 
 aps_consults %>% 
   group_by(aps_discipline) %>% 
@@ -1113,7 +1116,7 @@ aps_consults %>%
 
 \newpage
 
-```{r aps_summaries_sport, echo=FALSE, message=FALSE, warning=FALSE}
+```{r aps_summaries_sport, eval=!params$pathways_only_report, echo=FALSE, message=FALSE, warning=FALSE}
 
   
 aps_consults %>% 
@@ -1165,7 +1168,7 @@ aps_consults %>%
 
 ## Overall case load
 
-```{r case_load_weekly, echo=FALSE, fig.height=3, fig.width=6, message=FALSE, warning=FALSE}
+```{r case_load_weekly, eval=!params$pathways_only_report, echo=FALSE, fig.height=3, fig.width=6, message=FALSE, warning=FALSE}
 
 aps_weekly_caseload %>% 
   # distinct(about) %>% 
@@ -1200,7 +1203,7 @@ aps_weekly_caseload %>%
 
 ### Case load by sport
 
-```{r case_load_sport, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
+```{r case_load_sport, eval=!params$pathways_only_report, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
 
 for (i in seq_along(sports_all)) {
 
@@ -1252,7 +1255,7 @@ for (i in seq_along(sports_all)) {
 
 ### Case load by region
 
-```{r case_load_region, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
+```{r case_load_region, eval=!params$pathways_only_report, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
 
 for (i in seq_along(regions_all)) {
 
@@ -1304,7 +1307,7 @@ Support for all athletes identified for campaigns.
 
 HPSNZ supported the following campaign events: 
 
-```{r campaign_events, echo=FALSE, fig.width=6, message=FALSE, warning=FALSE}
+```{r campaign_events, eval=!params$pathways_only_report, echo=FALSE, fig.width=6, message=FALSE, warning=FALSE}
 
 ungroup(ams_taps) %>% 
   filter(!is.na(games) & between(start_date, ymd(params$report_date_min), ymd(params$report_date_max))) %>% 
@@ -1322,7 +1325,7 @@ ungroup(ams_taps) %>%
 
 ## Campaign support summaries
 
-```{r case_load_campaign, echo=FALSE, fig.height=8, fig.width=6, message=FALSE, warning=FALSE}
+```{r case_load_campaign, eval=!params$pathways_only_report, echo=FALSE, fig.height=8, fig.width=6, message=FALSE, warning=FALSE}
 
 aps_consults_campaigns <- aps_consults %>% 
   ungroup() %>% 
@@ -1363,7 +1366,7 @@ plot_data %>%
   
 \newpage  
   
-```{r aps_summaries_campaign, echo=FALSE, message=FALSE, warning=FALSE}
+```{r aps_summaries_campaign, eval=!params$pathways_only_report, echo=FALSE, message=FALSE, warning=FALSE}
 
 aps_consults_campaigns %>% 
   group_by(aps_discipline) %>% 
@@ -1412,7 +1415,7 @@ aps_consults_campaigns %>%
 
 \newpage
 
-```{r aps_summaries_sport_campaign, echo=FALSE, message=FALSE, warning=FALSE}
+```{r aps_summaries_sport_campaign, eval=!params$pathways_only_report, echo=FALSE, message=FALSE, warning=FALSE}
 
   
 aps_consults_campaigns %>% 
@@ -1465,7 +1468,7 @@ aps_consults_campaigns %>%
 
 Only data on the Olympic and Paralympic Games is presented in these visuals.
 
-```{r case_load_weekly_campaign, echo=FALSE, fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
+```{r case_load_weekly_campaign, eval=!params$pathways_only_report, echo=FALSE, fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
 
 aps_campaign_weekly_caseload %>% 
   filter(games %in% c("Olympic Summer Games", "Paralympic Summer Games")) %>% 
@@ -1489,13 +1492,20 @@ aps_campaign_weekly_caseload %>%
 
 ### Campaign case load by sport
 
-```{r case_load_sport_campaign, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
+```{r case_load_sport_campaign, eval=!params$pathways_only_report, echo=FALSE, fig.height=2, fig.width=6, message=FALSE, warning=FALSE}
 
-sports_campaign <- aps_campaign_weekly_caseload$sport %>% unique() %>% sort()
+sports_campaign <- aps_campaign_weekly_caseload %>% 
+  filter(games %in% c("Olympic Summer Games", "Paralympic Summer Games")) %>% 
+  dplyr::pull(sport) %>% 
+  unique() %>% 
+  sort()
+
+# ATTENTION HERE
 
 for (i in seq_along(sports_campaign)) {
 
       filtered_data <- aps_campaign_weekly_caseload %>% 
+        filter(games %in% c("Olympic Summer Games", "Paralympic Summer Games")) %>% 
         filter(sport == sports_campaign[i]) %>% 
         distinct(about) %>%
         mutate(week = map2(as.Date(ymd(params$report_date_min)),
