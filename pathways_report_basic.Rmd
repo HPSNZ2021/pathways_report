@@ -966,12 +966,43 @@ For any errors or irregularities in your Report, please log a ticket detailing t
 
 The estimate of APS support is based on the following records that should track unique interactions with the APS team:
 
--   **Medical consultations**: these are recorded with every visit by an athlete in person or electronically (e.g. telehealth).
--   **Nursing consultations**: these are recorded with every visit by an athlete in person or electronically
--   **Physiotherapy treatment notes**: these are recorded with every visit by an athlete in person electronically
--   **Psychology consultations**: these are recorded with every visit by an athlete in person or electronically
--   **Nutrition consultation**: these are recorded with every visit by an athlete in person or electronically
--   **Performance Life communications**: these are recorded with every visit by an athlete in person or electronically
+```{r, echo=FALSE, results='asis'}
+
+if (any(grepl("Medical", select_aps))) {
+  cat("-   **Medical consultations**: these are recorded with every visit by an athlete in person or electronically (e.g. telehealth)", sep = "\n\n")
+} else {
+  cat("")
+}
+if (any(grepl("Nurse", select_aps))) {
+  cat("-   **Nursing consultations**: these are recorded with every visit by an athlete in person or electronically", sep = "\n\n")
+} else {
+  cat("")
+}
+if(any(grepl("Physiotherapy",select_aps))) {
+  cat("-   **Physiotherapy treatment notes**: these are recorded with every visit by an athlete in person electronically", sep = "\n\n")
+} else {
+  cat("")
+}
+if (any(grepl("Psychology", select_aps))) {
+  cat("-   **Psychology consultations**: these are recorded with every visit by an athlete in person or electronically", sep = "\n\n")
+} else {
+  cat("")
+}
+if (any(grepl("Nutrition", select_aps))) {
+  cat("-   **Nutrition consultation**: these are recorded with every visit by an athlete in person or electronically", sep = "\n\n")
+} else {
+  cat("")
+}
+if (any(grepl("Life", select_aps))) {
+  cat("-   **Performance Life communications**: these are recorded with every visit by an athlete in person or electronically", sep = "\n\n")
+} else {
+  cat("")
+}
+
+
+
+```
+
 
 Note: There is an underlying assumption that practitioners will link diagnostic tools (e.g. PHEs, DASS, SADA, radiology, pathology, body composition, transition readiness, etc.) to a consultation record, and not use the diagnostic tool as a surrogate for a consultation record.
 
@@ -986,11 +1017,41 @@ Data cleaning addressed the following common problems:
 
 Interpretation of data by Subject Matter Expert (SME) is critical.
 
--   Medical data by Director of Performance Health
--   Physiotherapy data by Physiotherapy Lead and Director of Performance Health
--   Psychology data by Psychology Head of Discipline
--   Nutrition data by Nutrition Head of Discipline
--   Performance Life data by Performance Life Head of Discipline
+```{r, echo=FALSE, results='asis'}
+
+if (any(grepl("Medical", select_aps))) {
+  cat("-   Medical data by Director of Performance Health", sep = "\n\n")
+} else {
+  cat("")
+}
+if (any(grepl("Nurse", select_aps))) {
+  cat("-   Nursing data by Director of Performance Health", sep = "\n\n")
+} else {
+  cat("")
+}
+if(any(grepl("Physiotherapy",select_aps))) {
+  cat("-   Physiotherapy data by Physiotherapy Lead and Director of Performance Health", sep = "\n\n")
+} else {
+  cat("")
+}
+if (any(grepl("Psychology", select_aps))) {
+  cat("-   Psychology data by Psychology Head of Discipline", sep = "\n\n")
+} else {
+  cat("")
+}
+if (any(grepl("Nutrition", select_aps))) {
+  cat("-   Nutrition data by Nutrition Head of Discipline", sep = "\n\n")
+} else {
+  cat("")
+}
+if (any(grepl("Life", select_aps))) {
+  cat("-   Performance Life data by Performance Life Head of Discipline", sep = "\n\n")
+} else {
+  cat("")
+}
+
+
+```
 
 
 ```{r, echo=FALSE, results='asis'}
@@ -1053,6 +1114,7 @@ plot_data %>%
         legend.justification='left',
         legend.position = "bottom") +
   scale_fill_aps() +
+  guides(fill = guide_legend(nrow = 2)) +
   { if(params$pathways_only_data) {
     geom_rect(aes(xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf),
               data = ~ subset(., carding_status %in% c("TALENT IDENTIFICATION",
@@ -1614,9 +1676,10 @@ plot_data %>%
        y = "Consults") +
   scale_x_discrete(limits=rev) +
   scale_fill_aps() +
-  theme(plot.background = element_rect(colour = "#000000", fill=NA, size=1),
+  theme(#plot.background = element_rect(colour = "#000000", fill=NA, size=1),
         legend.justification='left',
-        legend.position = "bottom")
+        legend.position = "bottom") +
+  guides(fill = guide_legend(nrow = 2))
 
 ```
 
@@ -1910,39 +1973,305 @@ aps_consults %>%
   width(width = 6, unit = "cm") %>% 
   fit_to_width(max_width = 12, inc = 1L, max_iter = 20, unit = "cm")
 
-aps_consults %>% 
+```
+
+```{r, echo=FALSE, results='asis'}
+if (any(grepl("Medical",select_aps))) {
+    cat("\\newpage",
+        "## Medical support",
+        "\n",
+        sep= "\n\n")
+} else {
+  cat("")
+}
+
+```
+
+```{r unsupported_user_medical, eval=any(grepl("Medical",select_aps)), fig.width=6, message=FALSE, warning=FALSE}
+
+filtered_data <- aps_consults %>% 
   filter(as.numeric(carding_status)>7) %>% 
-  filter(aps_discipline %in% select_aps) %>% 
+  filter(aps_discipline == "Medical") 
+
+filtered_data %>% 
   group_by(about, aps_discipline, games, sport, clinician_actual) %>% 
   filter(row_number() == 1) %>% 
-  ungroup() %>% 
+  ungroup()  %>% 
   mutate(details = paste(sport, games, sep = " | ")) %>% 
-  select(aps_discipline, about, details, clinician_actual) %>%
-  arrange(aps_discipline, about, clinician_actual, details) %>% 
+  select(about, details, clinician_actual) %>%
+  arrange(about, clinician_actual, details) %>% 
   flextable() %>% 
-  set_caption(caption = as_paragraph(as_b("Non-supported individuals receiving APS Health and Wellbeing support")),
+  set_caption(
               align_with_table = FALSE,
               word_stylename = "Table Caption",
               fp_p = fpp,
               autonum = TRUE) %>%
   set_header_labels(about = "Name",
                     details = "NSO & Campaign",
-                    aps_discipline = "Support",
+                    # aps_discipline = "Support",
                     clinician_actual = "Practitioner") %>%
-  add_footer_lines(paste0(nrow(aps_consults %>% 
-                                 filter(as.numeric(carding_status)>7) %>% 
-                                 filter(aps_discipline %in% select_aps)), 
+  add_footer_lines(paste0(nrow(filtered_data), 
                           " total consultations."))  %>%
   theme_booktabs(bold_header = TRUE) %>%
   align(align = c("left"), part = "all") %>%
-  merge_v( j = "aps_discipline", part = "body", combine = TRUE) %>% 
-  valign(j = c(1:4), valign = "top", part = "all") %>%
+  merge_v( j = c("about", "details"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:3), valign = "top", part = "all") %>%
   border_inner(border = hpsnz_flex_border) %>% 
   border_outer(border = hpsnz_flex_border) %>% 
   keep_with_next(i = 1, value = TRUE, part = "body") %>% 
   paginate(group = "about", group_def = "rle") %>% 
   autofit() %>% 
-  fit_to_width(max_width = 6, inc = 1L, max_iter = 20, unit = "in")
+  fit_to_width(max_width = 6, inc = 1L, max_iter = 20, unit = "in") 
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (any(grepl("Nurse",select_aps))) {
+    cat("\\newpage",
+        "## Nurse support",
+        sep= "\n\n")
+} else {
+  cat("")
+}
+
+```
+
+```{r unsupported_user_nurse, eval=any(grepl("Nurse",select_aps)), fig.width=6, message=FALSE, warning=FALSE}
+
+filtered_data <- aps_consults %>% 
+  filter(as.numeric(carding_status)>7) %>% 
+  filter(aps_discipline == "Nurse") 
+
+filtered_data %>% 
+  group_by(about, aps_discipline, games, sport, clinician_actual) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()  %>% 
+  mutate(details = paste(sport, games, sep = " | ")) %>% 
+  select(about, details, clinician_actual) %>%
+  arrange(about, clinician_actual, details) %>% 
+  flextable() %>% 
+  set_caption(#caption = as_paragraph(as_b(paste0("Non-supported individuals receiving Nurse support"))),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(about = "Name",
+                    details = "NSO & Campaign",
+                    # aps_discipline = "Support",
+                    clinician_actual = "Practitioner") %>%
+  add_footer_lines(paste0(nrow(filtered_data), 
+                          " total consultations."))  %>%
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left"), part = "all") %>%
+  merge_v( j = c("about", "details"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:3), valign = "top", part = "all") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = 1, value = TRUE, part = "body") %>% 
+  paginate(group = "about", group_def = "rle") %>% 
+  autofit() %>% 
+  fit_to_width(max_width = 6, inc = 1L, max_iter = 20, unit = "in") 
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (any(grepl("Physiotherapy",select_aps))) {
+    cat("\\newpage",
+        "## Physiotherapy support",
+        sep= "\n\n")
+} else {
+  cat("")
+}
+
+```
+
+```{r unsupported_user_physiotherapy, eval=any(grepl("Physiotherapy",select_aps)), fig.width=6, message=FALSE, warning=FALSE}
+
+filtered_data <- aps_consults %>% 
+  filter(as.numeric(carding_status)>7) %>% 
+  filter(aps_discipline == "Physiotherapy") 
+
+filtered_data %>% 
+  group_by(about, aps_discipline, games, sport, clinician_actual) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()  %>% 
+  mutate(details = paste(sport, games, sep = " | ")) %>% 
+  select(about, details, clinician_actual) %>%
+  arrange(about, clinician_actual, details) %>% 
+  flextable() %>% 
+  set_caption(#caption = as_paragraph(as_b(paste0("Non-supported individuals receiving Physiotherapy support"))),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(about = "Name",
+                    details = "NSO & Campaign",
+                    # aps_discipline = "Support",
+                    clinician_actual = "Practitioner") %>%
+  add_footer_lines(paste0(nrow(filtered_data), 
+                          " total consultations."))  %>%
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left"), part = "all") %>%
+  merge_v( j = c("about", "details"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:3), valign = "top", part = "all") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = 1, value = TRUE, part = "body") %>% 
+  paginate(group = "about", group_def = "rle") %>% 
+  autofit() %>% 
+  fit_to_width(max_width = 6, inc = 1L, max_iter = 20, unit = "in") 
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (any(grepl("Psychology",select_aps))) {
+    cat("\\newpage",
+        "## Psychology support",
+        sep= "\n\n")
+} else {
+  cat("")
+}
+
+```
+
+
+```{r unsupported_user_psychology, eval=any(grepl("Psychology",select_aps)), fig.width=6, message=FALSE, warning=FALSE}
+
+filtered_data <- aps_consults %>% 
+  filter(as.numeric(carding_status)>7) %>% 
+  filter(aps_discipline == "Psychology") 
+
+filtered_data %>% 
+  group_by(about, aps_discipline, games, sport, clinician_actual) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()  %>% 
+  mutate(details = paste(sport, games, sep = " | ")) %>% 
+  select(about, details, clinician_actual) %>%
+  arrange(about, clinician_actual, details) %>% 
+  flextable() %>% 
+  set_caption(#caption = as_paragraph(as_b(paste0("Non-supported individuals receiving Psychology support"))),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(about = "Name",
+                    details = "NSO & Campaign",
+                    # aps_discipline = "Support",
+                    clinician_actual = "Practitioner") %>%
+  add_footer_lines(paste0(nrow(filtered_data), 
+                          " total consultations."))  %>%
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left"), part = "all") %>%
+  merge_v( j = c("about", "details"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:3), valign = "top", part = "all") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = 1, value = TRUE, part = "body") %>% 
+  paginate(group = "about", group_def = "rle") %>% 
+  autofit() %>% 
+  fit_to_width(max_width = 6, inc = 1L, max_iter = 20, unit = "in") 
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (any(grepl("Nutrition",select_aps))) {
+    cat("\\newpage",
+        "## Nutrition support",
+        sep= "\n\n")
+} else {
+  cat("")
+}
+
+```
+
+```{r unsupported_user_nutrition, eval=any(grepl("Nutrition",select_aps)), fig.width=6, message=FALSE, warning=FALSE}
+
+filtered_data <- aps_consults %>% 
+  filter(as.numeric(carding_status)>7) %>% 
+  filter(aps_discipline == "Nutrition") 
+
+filtered_data %>% 
+  group_by(about, aps_discipline, games, sport, clinician_actual) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()  %>% 
+  mutate(details = paste(sport, games, sep = " | ")) %>% 
+  select(about, details, clinician_actual) %>%
+  arrange(about, clinician_actual, details) %>% 
+  flextable() %>% 
+  set_caption(#caption = as_paragraph(as_b(paste0("Non-supported individuals receiving Nutrition support"))),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(about = "Name",
+                    details = "NSO & Campaign",
+                    # aps_discipline = "Support",
+                    clinician_actual = "Practitioner") %>%
+  add_footer_lines(paste0(nrow(filtered_data), 
+                          " total consultations."))  %>%
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left"), part = "all") %>%
+  merge_v( j = c("about", "details"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:3), valign = "top", part = "all") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = 1, value = TRUE, part = "body") %>% 
+  paginate(group = "about", group_def = "rle") %>% 
+  autofit() %>% 
+  fit_to_width(max_width = 6, inc = 1L, max_iter = 20, unit = "in") 
+
+```
+
+```{r, echo=FALSE, results='asis'}
+if (any(grepl("Life",select_aps))) {
+    cat("\\newpage",
+        "## Life counselling support",
+        sep= "\n\n")
+} else {
+  cat("")
+}
+
+```
+
+```{r unsupported_user_life, eval=any(grepl("Life",select_aps)), fig.width=6, message=FALSE, warning=FALSE}
+
+filtered_data <- aps_consults %>% 
+  filter(as.numeric(carding_status)>7) %>% 
+  filter(aps_discipline == "Life") 
+
+filtered_data %>% 
+  group_by(about, aps_discipline, games, sport, clinician_actual) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup()  %>% 
+  mutate(details = paste(sport, games, sep = " | ")) %>% 
+  select(about, details, clinician_actual) %>%
+  arrange(about, clinician_actual, details) %>% 
+  flextable() %>% 
+  set_caption(#caption = as_paragraph(as_b(paste0("Non-supported individuals receiving Life support"))),
+              align_with_table = FALSE,
+              word_stylename = "Table Caption",
+              fp_p = fpp,
+              autonum = TRUE) %>%
+  set_header_labels(about = "Name",
+                    details = "NSO & Campaign",
+                    # aps_discipline = "Support",
+                    clinician_actual = "Practitioner") %>%
+  add_footer_lines(paste0(nrow(filtered_data), 
+                          " total consultations."))  %>%
+  theme_booktabs(bold_header = TRUE) %>%
+  align(align = c("left"), part = "all") %>%
+  merge_v( j = c("about", "details"), part = "body", combine = TRUE) %>% 
+  valign(j = c(1:3), valign = "top", part = "all") %>%
+  border_inner(border = hpsnz_flex_border) %>% 
+  border_outer(border = hpsnz_flex_border) %>% 
+  keep_with_next(i = 1, value = TRUE, part = "body") %>% 
+  paginate(group = "about", group_def = "rle") %>% 
+  autofit() %>% 
+  fit_to_width(max_width = 6, inc = 1L, max_iter = 20, unit = "in") 
+
+```
+
+```{r unsupported_csv, eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
 
 unsupported_tx <- aps_consults %>% 
   filter(as.numeric(carding_status)>7) %>% 
